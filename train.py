@@ -1,0 +1,328 @@
+"""
+train.py — Phase 1: Pole-Parameterized Sequence Model
+
+THIS IS THE FILE THE AGENT MODIFIES.
+
+Architecture: A recurrent sequence model where each unit is parameterized by
+a learnable pole in the complex plane (sigma + i*omega).
+- sigma (real part): decay rate, constrained < 0 for stability
+- omega (imaginary part): oscillation frequency
+
+The model does character-level language modeling on tiny shakespeare.
+It outputs val_bpb (validation bits per byte) as the single evaluation metric.
+"""
+
+import time
+import sys
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# Import fixed constants from prepare.py
+from prepare import (
+    MAX_SEQ_LEN, TIME_BUDGET, VOCAB_SIZE, BATCH_SIZE,
+    prepare_data, get_batch, evaluate_model, compute_bpb,
+)
+
+# ============================================================================
+# Hyperparameters (the agent may tune these)
+# ============================================================================
+
+HIDDEN_DIM = 256        # Hidden state dimension
+NUM_LAYERS = 4          # Number of pole-parameterized layers
+LEARNING_RATE = 3e-3    # Learning rate
+WEIGHT_DECAY = 0.01     # Weight decay
+WARMUP_STEPS = 50       # Linear warmup steps
+LOG_INTERVAL = 10       # Print loss every N steps
+
+# ============================================================================
+# Phase 1: Pole-Parameterized Unit
+# ============================================================================
+
+class PoleUnit(nn.Module):
+    """
+    A recurrent unit parameterized by learnable poles in the complex plane.
+
+    Each hidden dimension has its own pole (sigma_j + i*omega_j).
+    The recurrence is:
+        h[t] = exp(sigma + i*omega) * h[t-1] + W_in * x[t]
+
+    sigma is constrained < 0 via: sigma = -softplus(raw_sigma)
+    This guarantees stability by construction.
+
+    The complex state is projected to real outputs via the real part.
+    """
+
+    def __init__(self, input_dim, hidden_dim):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+
+        # Learnable pole parameters
+        # raw_sigma: unconstrained, mapped to sigma < 0 via -softplus
+        # omega: oscillation frequency, unconstrained
+        self.raw_sigma = nn.Parameter(torch.randn(hidden_dim) * 0.5)
+        self.omega = nn.Parameter(torch.randn(hidden_dim) * 0.1)
+
+        # Input projection
+        self.W_in = nn.Linear(input_dim, hidden_dim, bias=False)
+
+        # Output projection (complex -> real)
+        self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
+
+        # Mixing gate
+        self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
+
+    def get_poles(self):
+        """Return (sigma, omega) with sigma constrained < 0."""
+        sigma = -F.softplus(self.raw_sigma)  # Always negative
+        omega = self.omega
+        return sigma, omega
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, seq_len, input_dim)
+        Returns:
+            output: (batch, seq_len, input_dim)
+        """
+        B, T, D = x.shape
+        sigma, omega = self.get_poles()
+
+        # Compute discrete-time pole: z = exp((sigma + i*omega) * dt)
+        # Using dt=1 for discrete time
+        decay = torch.exp(sigma)            # (hidden_dim,) — magnitude decay per step
+        phase = omega                        # (hidden_dim,) — phase rotation per step
+
+        # Project input to hidden space
+        x_proj = self.W_in(x)  # (B, T, hidden_dim)
+
+        # Run recurrence
+        h_real = torch.zeros(B, self.hidden_dim, device=x.device)
+        h_imag = torch.zeros(B, self.hidden_dim, device=x.device)
+
+        outputs_real = []
+        for t in range(T):
+            # Complex multiplication: (decay * e^(i*phase)) * (h_real + i*h_imag)
+            cos_phase = torch.cos(phase)
+            sin_phase = torch.sin(phase)
+
+            new_h_real = decay * (h_real * cos_phase - h_imag * sin_phase) + x_proj[:, t]
+            new_h_imag = decay * (h_real * sin_phase + h_imag * cos_phase)
+
+            h_real = new_h_real
+            h_imag = new_h_imag
+
+            outputs_real.append(h_real)
+
+        # Stack: (B, T, hidden_dim)
+        h_seq = torch.stack(outputs_real, dim=1)
+
+        # Gate: mix hidden state with input
+        gate_input = torch.cat([x, h_seq], dim=-1)
+        g = torch.sigmoid(self.gate(gate_input))
+        h_gated = g * h_seq
+
+        # Project back to input dim
+        output = self.W_out(h_gated)
+        return output
+
+
+class PoleLayer(nn.Module):
+    """
+    A single layer: pole-parameterized recurrence + feedforward + residual.
+    """
+
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.pole_unit = PoleUnit(dim, hidden_dim)
+        self.norm1 = nn.RMSNorm(dim)
+        self.norm2 = nn.RMSNorm(dim)
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Linear(dim * 2, dim),
+        )
+
+    def forward(self, x):
+        # Pole recurrence with residual
+        x = x + self.pole_unit(self.norm1(x))
+        # Feedforward with residual
+        x = x + self.ff(self.norm2(x))
+        return x
+
+
+class PoleModel(nn.Module):
+    """
+    Full sequence model: embedding -> N pole layers -> output projection.
+    Character-level language model.
+    """
+
+    def __init__(self, vocab_size=VOCAB_SIZE, dim=HIDDEN_DIM,
+                 hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.layers = nn.ModuleList([
+            PoleLayer(dim, hidden_dim) for _ in range(num_layers)
+        ])
+        self.norm_out = nn.RMSNorm(dim)
+        self.head = nn.Linear(dim, vocab_size, bias=False)
+
+        # Weight tying
+        self.head.weight = self.embedding.weight
+
+        # Initialize poles with spread of timescales
+        self._init_poles()
+
+    def _init_poles(self):
+        """Initialize poles so early layers are fast, later layers are slow."""
+        for i, layer in enumerate(self.layers):
+            n = len(self.layers)
+            # Early layers: large negative sigma (fast decay)
+            # Later layers: sigma closer to 0 (slow, persistent)
+            target_sigma = -3.0 + (2.5 * i / max(n - 1, 1))  # -3.0 to -0.5
+            # Spread of oscillation frequencies
+            target_omega_scale = 0.5 * (1.0 + i / max(n - 1, 1))
+
+            with torch.no_grad():
+                # Set raw_sigma so that -softplus(raw_sigma) ≈ target_sigma
+                # softplus(x) ≈ x for large x, so raw_sigma ≈ -target_sigma
+                layer.pole_unit.raw_sigma.fill_(-target_sigma)
+                layer.pole_unit.omega.uniform_(-target_omega_scale, target_omega_scale)
+
+    def forward(self, idx):
+        """
+        Args:
+            idx: (batch, seq_len) long tensor of token ids
+        Returns:
+            logits: (batch, seq_len, vocab_size)
+        """
+        x = self.embedding(idx)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.norm_out(x)
+        logits = self.head(x)
+        return logits
+
+    def compute_loss(self, inputs, targets):
+        """
+        Args:
+            inputs: numpy array (batch, seq_len) uint8
+            targets: numpy array (batch, seq_len) uint8
+        Returns:
+            loss: scalar float (nats per token)
+        """
+        device = next(self.parameters()).device
+        x = torch.from_numpy(inputs.astype(np.int64)).to(device)
+        y = torch.from_numpy(targets.astype(np.int64)).to(device)
+        logits = self.forward(x)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+        return loss
+
+    def get_pole_stats(self):
+        """Return pole statistics for logging."""
+        all_sigma = []
+        all_omega = []
+        for layer in self.layers:
+            sigma, omega = layer.pole_unit.get_poles()
+            all_sigma.append(sigma.detach().cpu())
+            all_omega.append(omega.detach().cpu())
+        return {
+            "sigma_mean": [s.mean().item() for s in all_sigma],
+            "sigma_std": [s.std().item() for s in all_sigma],
+            "omega_mean": [o.abs().mean().item() for o in all_omega],
+            "omega_std": [o.std().item() for o in all_omega],
+        }
+
+
+# ============================================================================
+# Training Loop
+# ============================================================================
+
+def train():
+    device = "cpu"
+    print(f"Device: {device}")
+    print(f"Time budget: {TIME_BUDGET}s")
+
+    # Prepare data
+    train_data, val_data = prepare_data()
+    print(f"Train tokens: {len(train_data):,}, Val tokens: {len(val_data):,}")
+
+    # Build model
+    model = PoleModel().to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters: {n_params:,}")
+
+    # Optimizer
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+    # LR scheduler with warmup
+    def lr_lambda(step):
+        if step < WARMUP_STEPS:
+            return step / max(WARMUP_STEPS, 1)
+        return 1.0
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Training loop — runs for TIME_BUDGET seconds
+    model.train()
+    step = 0
+    best_train_loss = float("inf")
+    start_time = time.time()
+
+    print("Training...")
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed >= TIME_BUDGET:
+            break
+
+        inputs, targets = get_batch(train_data)
+        loss = model.compute_loss(inputs, targets)
+
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        scheduler.step()
+
+        loss_val = loss.item()
+        if loss_val < best_train_loss:
+            best_train_loss = loss_val
+
+        if step % LOG_INTERVAL == 0:
+            bpb = compute_bpb(loss_val)
+            elapsed = time.time() - start_time
+            print(f"step={step} loss={loss_val:.4f} bpb={bpb:.4f} time={elapsed:.1f}s")
+
+        step += 1
+
+    total_time = time.time() - start_time
+    print(f"\nTraining complete: {step} steps in {total_time:.1f}s")
+
+    # Evaluate
+    print("Evaluating...")
+    model.eval()
+
+    def model_forward(inputs, targets):
+        return model.compute_loss(inputs, targets).item()
+
+    val_bpb = evaluate_model(model_forward, val_data, device=device)
+
+    # Print pole statistics
+    pole_stats = model.get_pole_stats()
+    print(f"\nPole statistics:")
+    for i in range(NUM_LAYERS):
+        print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
+              f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+
+    # === RESULT LINE — parsed by the experiment loop ===
+    print(f"\n=== RESULT val_bpb={val_bpb:.6f} steps={step} time={total_time:.1f}s params={n_params} ===")
+
+    return val_bpb
+
+
+if __name__ == "__main__":
+    train()
