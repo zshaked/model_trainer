@@ -29,7 +29,7 @@ from prepare import (
 # Hyperparameters (the agent may tune these)
 # ============================================================================
 
-HIDDEN_DIM = 256        # Hidden state dimension
+HIDDEN_DIM = 192        # Hidden state dimension
 NUM_LAYERS = 4          # Number of pole-parameterized layers
 LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
