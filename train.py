@@ -260,11 +260,14 @@ def train():
         weight_decay=WEIGHT_DECAY,
     )
 
-    # LR scheduler with warmup
+    # LR scheduler with warmup + cosine decay
+    import math
+    EST_TOTAL_STEPS = 130  # Estimated total steps in TIME_BUDGET
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
-        return 1.0
+        progress = (step - WARMUP_STEPS) / max(EST_TOTAL_STEPS - WARMUP_STEPS, 1)
+        return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Training loop — runs for TIME_BUDGET seconds
