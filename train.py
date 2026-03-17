@@ -64,6 +64,9 @@ class PoleUnit(nn.Module):
         self.raw_sigma = nn.Parameter(torch.randn(hidden_dim) * 0.5)
         self.omega = nn.Parameter(torch.randn(hidden_dim) * 0.1)
 
+        # Learned time step (dt) per hidden dim
+        self.log_dt = nn.Parameter(torch.zeros(hidden_dim))
+
         # Input projection
         self.W_in = nn.Linear(input_dim, hidden_dim, bias=False)
 
@@ -90,9 +93,9 @@ class PoleUnit(nn.Module):
         sigma, omega = self.get_poles()
 
         # Compute discrete-time pole: z = exp((sigma + i*omega) * dt)
-        # Using dt=1 for discrete time
-        decay = torch.exp(sigma)            # (hidden_dim,) — magnitude decay per step
-        phase = omega                        # (hidden_dim,) — phase rotation per step
+        dt = torch.exp(self.log_dt)          # Learned positive time step
+        decay = torch.exp(sigma * dt)        # (hidden_dim,) — magnitude decay per step
+        phase = omega * dt                   # (hidden_dim,) — phase rotation per step
 
         # Project input to hidden space
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
