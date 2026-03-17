@@ -31,56 +31,125 @@ from prepare import (
 
 HIDDEN_DIM = 128        # Hidden state dimension
 NUM_LAYERS = 2          # Number of pole-parameterized layers
+NUM_HEADS = 4           # Number of pole heads for multi-head structure
 LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
 WARMUP_STEPS = 20       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
 # ============================================================================
-# Phase 1: Pole-Parameterized Unit
+# Phase 1: Pole-Parameterized Unit with Multi-Head Structure
 # ============================================================================
 
 class PoleUnit(nn.Module):
     """
-    A recurrent unit parameterized by learnable poles in the complex plane.
+    Multi-head pole-parameterized recurrent unit.
 
-    Each hidden dimension has its own pole (sigma_j + i*omega_j).
+    Splits hidden_dim into NUM_HEADS heads, each processing independently.
+    Each head has its own poles (sigma_j + i*omega_j) initialized at different
+    timescale bands:
+    - Head 0: fast decay (large negative sigma)
+    - Head 3: slow decay (sigma near 0)
+
     The recurrence is:
         h[t] = exp(sigma + i*omega) * h[t-1] + W_in * x[t]
 
     sigma is constrained < 0 via: sigma = -softplus(raw_sigma)
     This guarantees stability by construction.
 
-    The complex state is projected to real outputs via the real part.
+    Each head processes its portion of the hidden state independently,
+    then the outputs are concatenated.
     """
 
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
         super().__init__()
         self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
 
-        # Learnable pole parameters
+        assert hidden_dim % num_heads == 0, f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"
+
+        # Learnable pole parameters per head
+        # Shape: (num_heads, head_dim)
         # raw_sigma: unconstrained, mapped to sigma < 0 via -softplus
         # omega: oscillation frequency, unconstrained
-        self.raw_sigma = nn.Parameter(torch.randn(hidden_dim) * 0.5)
-        self.omega = nn.Parameter(torch.randn(hidden_dim) * 0.1)
+        self.raw_sigma = nn.Parameter(torch.randn(num_heads, self.head_dim) * 0.5)
+        self.omega = nn.Parameter(torch.randn(num_heads, self.head_dim) * 0.1)
 
-        # Learned time step (dt) per hidden dim
-        self.log_dt = nn.Parameter(torch.zeros(hidden_dim))
+        # Learned time step (dt) per head dimension
+        self.log_dt = nn.Parameter(torch.zeros(num_heads, self.head_dim))
 
         # Input projection
         self.W_in = nn.Linear(input_dim, hidden_dim, bias=False)
 
-        # Output projection (complex -> real)
+        # Output projection
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
 
         # Mixing gate
         self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
 
+        # Frequency-band attention parameters
+        # Split hidden_dim into num_bands groups based on omega values
+        self.num_bands = 4
+        self.band_size = hidden_dim // self.num_bands
+        assert hidden_dim % self.num_bands == 0, f"hidden_dim ({hidden_dim}) must be divisible by num_bands ({self.num_bands})"
+
+        # Small Q/K/V projections for cross-band attention
+        band_proj_dim = 16
+        self.band_q = nn.Linear(self.band_size, band_proj_dim, bias=False)
+        self.band_k = nn.Linear(self.band_size, band_proj_dim, bias=False)
+        self.band_v = nn.Linear(self.band_size, band_proj_dim, bias=False)
+        self.band_out = nn.Linear(band_proj_dim, self.band_size, bias=False)
+
     def get_poles(self):
-        """Return (sigma, omega) with sigma constrained < 0."""
+        """Return (sigma, omega) with sigma constrained < 0.
+        Returns:
+            sigma: (num_heads, head_dim)
+            omega: (num_heads, head_dim)
+        """
         sigma = -F.softplus(self.raw_sigma)  # Always negative
         omega = self.omega
         return sigma, omega
+
+    def apply_frequency_band_attention(self, h_seq):
+        """
+        Apply lightweight cross-band attention based on frequency bands.
+
+        Args:
+            h_seq: (B, T, hidden_dim) output from FFT convolution
+
+        Returns:
+            h_seq_attn: (B, T, hidden_dim) after band attention
+        """
+        B, T, D = h_seq.shape
+        # Reshape into bands: (B, T, num_bands, band_size)
+        h_bands = h_seq.reshape(B, T, self.num_bands, self.band_size)
+        # Reshape for attention: (B*T, num_bands, band_size)
+        h_bands_flat = h_bands.reshape(B * T, self.num_bands, self.band_size)
+
+        # Compute Q, K, V for each band
+        # Q, K, V: (B*T, num_bands, band_proj_dim)
+        q = self.band_q(h_bands_flat)  # (B*T, num_bands, band_proj_dim)
+        k = self.band_k(h_bands_flat)  # (B*T, num_bands, band_proj_dim)
+        v = self.band_v(h_bands_flat)  # (B*T, num_bands, band_proj_dim)
+
+        # Dot-product attention across bands
+        # scores: (B*T, num_bands, num_bands)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (q.shape[-1] ** 0.5)
+        attn_weights = F.softmax(scores, dim=-1)  # (B*T, num_bands, num_bands)
+
+        # Apply attention to values
+        # attn_out: (B*T, num_bands, band_proj_dim)
+        attn_out = torch.matmul(attn_weights, v)
+
+        # Project back to band_size
+        # h_attn: (B*T, num_bands, band_size)
+        h_attn = self.band_out(attn_out)
+
+        # Reshape back: (B*T, num_bands, band_size) -> (B, T, hidden_dim)
+        h_seq_attn = h_attn.reshape(B, T, D)
+
+        return h_seq_attn
 
     def forward(self, x):
         """
@@ -90,33 +159,65 @@ class PoleUnit(nn.Module):
             output: (batch, seq_len, input_dim)
         """
         B, T, D = x.shape
-        sigma, omega = self.get_poles()
-
-        # Compute discrete-time pole: z = exp((sigma + i*omega) * dt)
-        dt = torch.exp(self.log_dt)          # Learned positive time step
-        decay = torch.exp(sigma * dt)        # (hidden_dim,) — magnitude decay per step
-        phase = omega * dt                   # (hidden_dim,) — phase rotation per step
+        sigma, omega = self.get_poles()  # (num_heads, head_dim)
 
         # Project input to hidden space
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
+        # Reshape to (B, T, num_heads, head_dim)
+        x_proj = x_proj.reshape(B, T, self.num_heads, self.head_dim)
 
-        # Build causal convolution kernel via FFT (parallel, O(T log T))
-        # kernel[t] = z^t where z = decay * e^(i*phase)
-        t_idx = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(1)  # (T, 1)
-        # kernel_real[t] = decay^t * cos(phase*t), kernel_imag[t] = decay^t * sin(phase*t)
-        log_decay = torch.log(decay.clamp(min=1e-8))  # (hidden_dim,)
-        kernel_mag = torch.exp(t_idx * log_decay.unsqueeze(0))  # (T, hidden_dim)
-        kernel_phase = t_idx * phase.unsqueeze(0)  # (T, hidden_dim)
-        kernel_real = kernel_mag * torch.cos(kernel_phase)  # (T, hidden_dim)
+        # Process each head independently
+        head_outputs = []
 
-        # Causal convolution via FFT: h_real[t] = sum_{k=0}^{t} kernel[k] * x_proj[t-k]
-        # Pad to avoid circular convolution
-        fft_len = 2 * T
-        # x_proj: (B, T, H) -> (B, H, T) for conv
-        x_f = torch.fft.rfft(x_proj.transpose(1, 2), n=fft_len, dim=-1)  # (B, H, fft_len//2+1)
-        k_f = torch.fft.rfft(kernel_real.T, n=fft_len, dim=-1)  # (H, fft_len//2+1)
-        h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, H, T)
-        h_seq = h_seq.transpose(1, 2)  # (B, T, H)
+        for h in range(self.num_heads):
+            x_head = x_proj[:, :, h, :]  # (B, T, head_dim)
+            sigma_h = sigma[h]  # (head_dim,)
+            omega_h = omega[h]  # (head_dim,)
+            log_dt_h = self.log_dt[h]  # (head_dim,)
+
+            # Compute discrete-time pole using bilinear (Tustin) transform
+            # z = (1 + s*dt/2) / (1 - s*dt/2) where s = sigma + i*omega
+            dt = torch.exp(log_dt_h)  # (head_dim,) — learned positive time step
+
+            # Bilinear transform: s*dt/2
+            s_dt_half = (sigma_h + 1j * omega_h) * dt / 2.0
+
+            # numerator = 1 + s*dt/2, denominator = 1 - s*dt/2
+            numerator = 1.0 + s_dt_half  # (head_dim,) complex
+            denominator = 1.0 - s_dt_half  # (head_dim,) complex
+
+            # z = numerator / denominator
+            z = numerator / denominator  # (head_dim,) complex
+
+            # Extract magnitude and angle for the kernel
+            z_mag = torch.abs(z)  # (head_dim,)
+            z_angle = torch.angle(z)  # (head_dim,)
+
+            # Build causal convolution kernel via FFT (parallel, O(T log T))
+            # kernel[t] = z^t = |z|^t * e^(i*angle*t)
+            t_idx = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(1)  # (T, 1)
+            # kernel_real[t] = |z|^t * cos(angle*t)
+            log_mag = torch.log(z_mag.clamp(min=1e-8))  # (head_dim,)
+            kernel_mag = torch.exp(t_idx * log_mag.unsqueeze(0))  # (T, head_dim)
+            kernel_angle = t_idx * z_angle.unsqueeze(0)  # (T, head_dim)
+            kernel_real = kernel_mag * torch.cos(kernel_angle)  # (T, head_dim)
+
+            # Causal convolution via FFT: h_real[t] = sum_{k=0}^{t} kernel[k] * x[t-k]
+            # Pad to avoid circular convolution
+            fft_len = 2 * T
+            # x_head: (B, T, head_dim) -> (B, head_dim, T) for conv
+            x_f = torch.fft.rfft(x_head.transpose(1, 2), n=fft_len, dim=-1)  # (B, head_dim, fft_len//2+1)
+            k_f = torch.fft.rfft(kernel_real.T, n=fft_len, dim=-1)  # (head_dim, fft_len//2+1)
+            h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, head_dim, T)
+            h_seq = h_seq.transpose(1, 2)  # (B, T, head_dim)
+
+            head_outputs.append(h_seq)
+
+        # Concatenate all heads
+        h_seq = torch.cat(head_outputs, dim=-1)  # (B, T, hidden_dim)
+
+        # Apply frequency-band attention
+        h_seq = self.apply_frequency_band_attention(h_seq)  # (B, T, hidden_dim)
 
         # Gate: mix hidden state with input
         gate_input = torch.cat([x, h_seq], dim=-1)
@@ -171,24 +272,36 @@ class PoleModel(nn.Module):
         # Weight tying
         self.head.weight = self.embedding.weight
 
-        # Initialize poles with spread of timescales
+        # Initialize poles with spread of timescales per head
         self._init_poles()
 
     def _init_poles(self):
-        """Initialize poles so early layers are fast, later layers are slow."""
+        """Initialize poles so heads span different timescale bands.
+        Within each layer:
+        - Head 0: very fast decay (large negative sigma)
+        - Head 1: fast decay
+        - Head 2: slow decay
+        - Head 3: very slow decay (sigma near 0)
+        """
         for i, layer in enumerate(self.layers):
-            n = len(self.layers)
-            # Early layers: large negative sigma (fast decay)
-            # Later layers: sigma closer to 0 (slow, persistent)
-            target_sigma = -3.0 + (2.5 * i / max(n - 1, 1))  # -3.0 to -0.5
-            # Spread of oscillation frequencies
-            target_omega_scale = 0.5 * (1.0 + i / max(n - 1, 1))
+            n_layers = len(self.layers)
+            # Layer-based variation: early layers faster than later layers
+            layer_decay_scale = 0.7 + 0.3 * (i / max(n_layers - 1, 1))
 
             with torch.no_grad():
-                # Set raw_sigma so that -softplus(raw_sigma) ≈ target_sigma
-                # softplus(x) ≈ x for large x, so raw_sigma ≈ -target_sigma
-                layer.pole_unit.raw_sigma.fill_(-target_sigma)
-                layer.pole_unit.omega.uniform_(-target_omega_scale, target_omega_scale)
+                # Initialize each head with different sigma ranges
+                for h in range(NUM_HEADS):
+                    # Head 0 (h=0): fast, Head 3 (h=3): slow
+                    head_scale = h / max(NUM_HEADS - 1, 1)
+                    # Sigma ranges from -3.0 (fast) to -0.3 (slow), scaled by layer
+                    target_sigma = -3.0 + 2.7 * head_scale
+                    target_sigma *= layer_decay_scale
+
+                    layer.pole_unit.raw_sigma[h].fill_(-target_sigma)
+
+                    # Spread of oscillation frequencies
+                    target_omega_scale = 0.3 + 0.4 * head_scale
+                    layer.pole_unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
 
     def forward(self, idx):
         """
@@ -225,8 +338,11 @@ class PoleModel(nn.Module):
         all_omega = []
         for layer in self.layers:
             sigma, omega = layer.pole_unit.get_poles()
-            all_sigma.append(sigma.detach().cpu())
-            all_omega.append(omega.detach().cpu())
+            # Flatten heads: (num_heads, head_dim) -> (hidden_dim,)
+            sigma_flat = sigma.reshape(-1)
+            omega_flat = omega.reshape(-1)
+            all_sigma.append(sigma_flat.detach().cpu())
+            all_omega.append(omega_flat.detach().cpu())
         return {
             "sigma_mean": [s.mean().item() for s in all_sigma],
             "sigma_std": [s.std().item() for s in all_sigma],
