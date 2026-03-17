@@ -43,7 +43,7 @@ LOG_INTERVAL = 10       # Print loss every N steps
 
 class PoleUnit(nn.Module):
     """
-    Multi-head pole-parameterized recurrent unit.
+    Multi-head pole-parameterized recurrent unit with frequency-band attention.
 
     Splits hidden_dim into NUM_HEADS heads, each processing independently.
     Each head has its own poles (sigma_j + i*omega_j) initialized at different
@@ -59,6 +59,10 @@ class PoleUnit(nn.Module):
 
     Each head processes its portion of the hidden state independently,
     then the outputs are concatenated.
+
+    After FFT convolution, applies lightweight frequency-band attention:
+    splits the output into 4 frequency bands based on omega values,
+    applies dot-product attention across bands, then reshapes back.
     """
 
     def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
