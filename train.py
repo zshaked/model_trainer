@@ -33,7 +33,7 @@ HIDDEN_DIM = 256        # Hidden state dimension
 NUM_LAYERS = 4          # Number of pole-parameterized layers
 LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
-WARMUP_STEPS = 50       # Linear warmup steps
+WARMUP_STEPS = 20       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
 # ============================================================================
