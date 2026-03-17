@@ -139,9 +139,9 @@ class PoleLayer(nn.Module):
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
         self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 2),
+            nn.Linear(dim, dim * 4),
             nn.GELU(),
-            nn.Linear(dim * 2, dim),
+            nn.Linear(dim * 4, dim),
         )
 
     def forward(self, x):
