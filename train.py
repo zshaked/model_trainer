@@ -100,26 +100,23 @@ class PoleUnit(nn.Module):
         # Project input to hidden space
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
 
-        # Run recurrence
-        h_real = torch.zeros(B, self.hidden_dim, device=x.device)
-        h_imag = torch.zeros(B, self.hidden_dim, device=x.device)
+        # Build causal convolution kernel via FFT (parallel, O(T log T))
+        # kernel[t] = z^t where z = decay * e^(i*phase)
+        t_idx = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(1)  # (T, 1)
+        # kernel_real[t] = decay^t * cos(phase*t), kernel_imag[t] = decay^t * sin(phase*t)
+        log_decay = torch.log(decay.clamp(min=1e-8))  # (hidden_dim,)
+        kernel_mag = torch.exp(t_idx * log_decay.unsqueeze(0))  # (T, hidden_dim)
+        kernel_phase = t_idx * phase.unsqueeze(0)  # (T, hidden_dim)
+        kernel_real = kernel_mag * torch.cos(kernel_phase)  # (T, hidden_dim)
 
-        outputs_real = []
-        for t in range(T):
-            # Complex multiplication: (decay * e^(i*phase)) * (h_real + i*h_imag)
-            cos_phase = torch.cos(phase)
-            sin_phase = torch.sin(phase)
-
-            new_h_real = decay * (h_real * cos_phase - h_imag * sin_phase) + x_proj[:, t]
-            new_h_imag = decay * (h_real * sin_phase + h_imag * cos_phase)
-
-            h_real = new_h_real
-            h_imag = new_h_imag
-
-            outputs_real.append(h_real)
-
-        # Stack: (B, T, hidden_dim)
-        h_seq = torch.stack(outputs_real, dim=1)
+        # Causal convolution via FFT: h_real[t] = sum_{k=0}^{t} kernel[k] * x_proj[t-k]
+        # Pad to avoid circular convolution
+        fft_len = 2 * T
+        # x_proj: (B, T, H) -> (B, H, T) for conv
+        x_f = torch.fft.rfft(x_proj.transpose(1, 2), n=fft_len, dim=-1)  # (B, H, fft_len//2+1)
+        k_f = torch.fft.rfft(kernel_real.T, n=fft_len, dim=-1)  # (H, fft_len//2+1)
+        h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, H, T)
+        h_seq = h_seq.transpose(1, 2)  # (B, T, H)
 
         # Gate: mix hidden state with input
         gate_input = torch.cat([x, h_seq], dim=-1)
