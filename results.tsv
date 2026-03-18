@@ -162,3 +162,6 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 18:53:26	phase14-kuramoto-coupling-K0.1	2.206746	817	120.1	528896	no
 2026-03-18 18:55:57	phase15-curvature-gate	2.207099	781	120.0	528896	no
 2026-03-18 18:58:57	phase16-criticality-avalanche	2.215623	815	120.1	528896	no
+2026-03-18 19:02:15	phase17-symplectic-kernel	2.241774	800	120.1	528896	no
+2026-03-18 19:04:36	phase18-complex-magnitude	2.307336	728	120.1	528896	no
+2026-03-18 19:07:02	phase18-mini-attention-d32	2.280962	690	120.0	561920	no
