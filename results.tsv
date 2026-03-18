@@ -115,3 +115,7 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 12:47:41	bilinear-to-euler	CRASH				no
 2026-03-18 13:10:36	phase2-adaptive-threshold	2.282914	908	120.1	496640	no
 2026-03-18 13:13:09	phase2-hyperpolarization-v2	2.202175	966	120.1	496384	no
+2026-03-18 13:15:31	phase2-gate-with-prev-hidden	2.177616	1000	120.0	528896	yes
+2026-03-18 13:18:07	phase2-2layer-gate	2.234877	965	120.1	561920	no
+2026-03-18 13:20:33	phase2-refractory-bias	2.262012	974	120.1	529152	no
+2026-03-18 13:22:47	phase2-change-detection-gate	2.244292	966	120.1	528896	no
