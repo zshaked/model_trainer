@@ -34,7 +34,7 @@ NUM_LAYERS = 2          # Number of pole-parameterized layers
 NUM_HEADS = 4           # Number of pole heads for multi-head structure
 LEARNING_RATE = 1e-2    # Learning rate
 WEIGHT_DECAY = 0.05     # Weight decay
-WARMUP_STEPS = 40       # Linear warmup steps
+WARMUP_STEPS = 60       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
 # ============================================================================
