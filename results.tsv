@@ -111,3 +111,5 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 04:19:24	conv-groups-128-to-4	2.221348	712	120.2	527872	no
 2026-03-18 04:21:54	pre-gate-rmsnorm	2.259035	665	120.1	496384	no
 2026-03-18 04:24:21	add-post-gate-conv	2.241581	653	120.1	496896	no
+2026-03-18 12:45:15	freq-band-attention	2.276419	567	120.0	502272	no
+2026-03-18 12:47:41	bilinear-to-euler	CRASH				no
