@@ -203,6 +203,8 @@ class PoleModel(nn.Module):
                 nn.init.trunc_normal_(module.weight, std=0.02)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Conv1d):
+                nn.init.trunc_normal_(module.weight, std=0.02)
 
         # Initialize poles with spread of timescales per head
         self._init_poles()

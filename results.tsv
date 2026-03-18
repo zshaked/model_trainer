@@ -51,3 +51,7 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 01:53:44	learnable-residual-kernel	2.470807	675	120.0	500096	no
 2026-03-18 01:56:01	embed-scale-sqrt-dim	2.568428	669	120.0	496000	no
 2026-03-18 01:58:21	trunc-normal-embed-init	2.222272	667	120.2	496000	yes
+2026-03-18 02:00:43	trunc-normal-all-linears	2.219649	699	120.1	496000	yes
+2026-03-18 02:02:56	lr-1e2-to-1.5e2-retry	2.265392	697	120.0	496000	no
+2026-03-18 02:05:11	init-std-0.02-to-0.01	2.372494	697	120.0	496000	no
+2026-03-18 02:07:30	wout-add-bias	2.257370	688	120.1	496256	no
