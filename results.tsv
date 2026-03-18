@@ -102,3 +102,7 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 03:56:23	curriculum-learning	2.244472	765	120.1	496128	no
 2026-03-18 03:58:45	multi-step-loss	2.240236	669	120.2	496128	no
 2026-03-18 04:01:18	implicit-kernel-modulation	2.227611	689	120.1	504704	no
+2026-03-18 04:03:57	small-output-init-0.005	2.255311	687	120.0	496128	no
+2026-03-18 04:06:22	cross-head-mixing	2.329331	677	120.1	496160	no
+2026-03-18 04:08:56	glu-style-pole-unit	2.231798	739	120.0	463104	no
+2026-03-18 04:11:33	cosine-warm-restarts	2.394255	707	120.2	496128	no
