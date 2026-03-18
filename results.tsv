@@ -113,3 +113,5 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 04:24:21	add-post-gate-conv	2.241581	653	120.1	496896	no
 2026-03-18 12:45:15	freq-band-attention	2.276419	567	120.0	502272	no
 2026-03-18 12:47:41	bilinear-to-euler	CRASH				no
+2026-03-18 13:10:36	phase2-adaptive-threshold	2.282914	908	120.1	496640	no
+2026-03-18 13:13:09	phase2-hyperpolarization-v2	2.202175	966	120.1	496384	no

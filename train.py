@@ -90,8 +90,8 @@ class PoleUnit(nn.Module):
         # Output projection
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
 
-        # Mixing gate
-        self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
+        # Mixing gate with hyperpolarization: includes previous hidden state
+        self.gate = nn.Linear(input_dim + hidden_dim * 2, hidden_dim)
 
     def get_poles(self):
         """Return (sigma, omega) with sigma constrained < 0.
@@ -141,8 +141,10 @@ class PoleUnit(nn.Module):
         h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, H, T)
         h_seq = h_seq.transpose(1, 2)  # (B, T, H)
 
-        # Gate: mix hidden state with input
-        gate_input = torch.cat([x, h_seq], dim=-1)
+        # Gate with hyperpolarization: mix hidden state with input
+        # Include shifted activity (causal) so gate can learn refractory behavior
+        h_shifted = F.pad(h_seq[:, :-1, :], (0, 0, 1, 0))  # h[t-1], causal
+        gate_input = torch.cat([x, h_seq, h_shifted], dim=-1)
         g = torch.sigmoid(self.gate(gate_input))
         h_gated = g * h_seq
 
