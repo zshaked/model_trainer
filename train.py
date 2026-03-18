@@ -195,6 +195,10 @@ class PoleModel(nn.Module):
         # Weight tying
         self.head.weight = self.embedding.weight
 
+        # Better embedding init
+        nn.init.trunc_normal_(self.embedding.weight, std=0.02)
+        nn.init.trunc_normal_(self.pos_embedding.weight, std=0.02)
+
         # Initialize poles with spread of timescales per head
         self._init_poles()
 
