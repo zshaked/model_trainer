@@ -158,9 +158,9 @@ class PoleLayer(nn.Module):
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
         # SwiGLU-style feedforward: gate branch * value branch
-        self.ff_gate = nn.Linear(dim, dim * 4)
-        self.ff_value = nn.Linear(dim, dim * 4)
-        self.ff_out = nn.Linear(dim * 4, dim)
+        self.ff_gate = nn.Linear(dim, dim * 3)
+        self.ff_value = nn.Linear(dim, dim * 3)
+        self.ff_out = nn.Linear(dim * 3, dim)
 
     def forward(self, x):
         # Pole recurrence with residual
