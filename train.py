@@ -159,7 +159,7 @@ class PoleLayer(nn.Module):
         self.norm2 = nn.RMSNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, dim * 4),
-            nn.GELU(),
+            nn.SiLU(),
             nn.Linear(dim * 4, dim),
         )
 
