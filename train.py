@@ -185,6 +185,7 @@ class PoleModel(nn.Module):
                  hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim)
+        self.pos_embedding = nn.Embedding(MAX_SEQ_LEN, dim)
         self.layers = nn.ModuleList([
             PoleLayer(dim, hidden_dim) for _ in range(num_layers)
         ])
@@ -232,7 +233,9 @@ class PoleModel(nn.Module):
         Returns:
             logits: (batch, seq_len, vocab_size)
         """
-        x = self.embedding(idx)
+        B, T = idx.shape
+        pos = torch.arange(T, device=idx.device).unsqueeze(0)
+        x = self.embedding(idx) + self.pos_embedding(pos)
         for layer in self.layers:
             x = layer(x)
         x = self.norm_out(x)
