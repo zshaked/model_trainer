@@ -84,6 +84,9 @@ class PoleUnit(nn.Module):
         # Input projection
         self.W_in = nn.Linear(input_dim, hidden_dim, bias=False)
 
+        # Short causal conv for local patterns (kernel_size=4)
+        self.short_conv = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=4, padding=3, groups=hidden_dim, bias=False)
+
         # Output projection
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
 
@@ -119,8 +122,9 @@ class PoleUnit(nn.Module):
         z_mag = torch.abs(z)  # (hidden_dim,)
         z_angle = torch.angle(z)  # (hidden_dim,)
 
-        # Project input to hidden space
+        # Project input to hidden space + short causal conv
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
+        x_proj = self.short_conv(x_proj.transpose(1, 2))[:, :, :T].transpose(1, 2)  # causal trim
 
         # Build causal convolution kernel via FFT (parallel, O(T log T))
         # kernel[t] = z^t = |z|^t * cos(angle*t)
