@@ -300,7 +300,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 130  # Estimated total steps in TIME_BUDGET
+    EST_TOTAL_STEPS = 700  # Estimated total steps in TIME_BUDGET
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
