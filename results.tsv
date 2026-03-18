@@ -119,3 +119,10 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 13:18:07	phase2-2layer-gate	2.234877	965	120.1	561920	no
 2026-03-18 13:20:33	phase2-refractory-bias	2.262012	974	120.1	529152	no
 2026-03-18 13:22:47	phase2-change-detection-gate	2.244292	966	120.1	528896	no
+2026-03-18 13:39:32	phase3-predictive-coding-v1	2.268704	710	120.0	561664	no
+2026-03-18 13:41:56	phase3-precision-gates	2.295850	747	120.1	529408	no
+2026-03-18 13:44:18	phase3-precision-gates-init3	2.198834	755	120.1	529408	no
+2026-03-18 13:46:47	phase3-temporal-prediction-aux	2.228913	700	120.0	561664	no
+2026-03-18 13:49:14	phase3-delta-mix-input	2.228340	725	120.0	528898	no
+2026-03-18 13:51:37	phase3-inter-layer-prediction	2.295848	740	120.0	545280	no
+2026-03-18 13:54:04	phase3-early-exit-aux-loss	2.266013	720	120.1	528896	no
