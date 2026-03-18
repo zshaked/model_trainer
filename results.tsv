@@ -17,3 +17,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-17 03:16:51	layers-2-to-3-fft	3.069780	878	120.0	626944	no
 2026-03-18 00:30:38	hidden-128-to-192-vectorized	CRASH				no
 2026-03-18 00:37:19	hidden-128-to-192-vectorized	2.999520	496	120.1	938304	no
+2026-03-18 00:39:37	gelu-to-silu-ff	2.942927	811	120.1	428928	yes

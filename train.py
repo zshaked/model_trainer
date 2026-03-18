@@ -157,17 +157,17 @@ class PoleLayer(nn.Module):
         self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.SiLU(),
-            nn.Linear(dim * 4, dim),
-        )
+        # SwiGLU-style feedforward: gate branch * value branch
+        self.ff_gate = nn.Linear(dim, dim * 4)
+        self.ff_value = nn.Linear(dim, dim * 4)
+        self.ff_out = nn.Linear(dim * 4, dim)
 
     def forward(self, x):
         # Pole recurrence with residual
         x = x + self.pole_unit(self.norm1(x))
-        # Feedforward with residual
-        x = x + self.ff(self.norm2(x))
+        # SwiGLU feedforward with residual
+        h = self.norm2(x)
+        x = x + self.ff_out(F.silu(self.ff_gate(h)) * self.ff_value(h))
         return x
 
 
