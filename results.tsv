@@ -150,3 +150,10 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 15:07:34	phase9-ff-short-conv	2.263157	680	120.2	531200	no
 2026-03-18 15:10:09	phase9-output-scale-1-sqrt-2n	2.231471	931	120.0	528896	no
 2026-03-18 15:12:23	phase9-ffn-dropout-0.05	2.235858	728	120.1	528896	no
+2026-03-18 18:29:17	phase10-tropical-powerlaw-kernel	2.190981	775	120.2	528896	no
+2026-03-18 18:31:43	phase10-hybrid-exp-powerlaw	2.222596	807	120.0	529152	no
+2026-03-18 18:34:09	phase10-fractional-alpha-learnable	2.221087	811	120.1	529152	no
+2026-03-18 18:37:30	phase11-selective-scan-v1	2.407949	328	120.0	561920	no
+2026-03-18 18:39:49	phase11-selective-B-gate	2.274888	766	120.1	561664	no
+2026-03-18 18:42:23	phase12-reaction-diffusion-v1	CRASH				no
+2026-03-18 18:44:50	phase12-morpho-gaussian-bump	2.300091	787	120.1	528896	no
