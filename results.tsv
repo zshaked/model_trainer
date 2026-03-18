@@ -157,3 +157,8 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 18:39:49	phase11-selective-B-gate	2.274888	766	120.1	561664	no
 2026-03-18 18:42:23	phase12-reaction-diffusion-v1	CRASH				no
 2026-03-18 18:44:50	phase12-morpho-gaussian-bump	2.300091	787	120.1	528896	no
+2026-03-18 18:47:24	phase13-holographic-tree-NONCAUSAL	CRASH				no
+2026-03-18 18:50:01	phase13-causal-holographic-tree	2.232832	673	120.2	594432	no
+2026-03-18 18:53:26	phase14-kuramoto-coupling-K0.1	2.206746	817	120.1	528896	no
+2026-03-18 18:55:57	phase15-curvature-gate	2.207099	781	120.0	528896	no
+2026-03-18 18:58:57	phase16-criticality-avalanche	2.215623	815	120.1	528896	no

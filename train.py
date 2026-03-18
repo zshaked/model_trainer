@@ -153,40 +153,6 @@ class PoleUnit(nn.Module):
         return output
 
 
-class HolographicMerge(nn.Module):
-    """
-    Phase 13: Holographic binary tree — merges adjacent positions at multiple
-    scales, then broadcasts back. Creates O(log T) depth hierarchical context.
-    """
-    def __init__(self, dim):
-        super().__init__()
-        # Single shared merge function across all levels
-        self.merge = nn.Linear(dim * 2, dim, bias=False)
-
-    def forward(self, x):
-        """x: (B, T, D) -> (B, T, D) with hierarchical context mixed in."""
-        B, T, D = x.shape
-        context = x  # start with original
-
-        # Bottom-up: merge pairs at each level, accumulate into context
-        h = x
-        scale = 1
-        while h.shape[1] > 1:
-            T_cur = h.shape[1]
-            if T_cur % 2 == 1:
-                h = F.pad(h, (0, 0, 0, 1))  # pad to even
-                T_cur += 1
-            left = h[:, 0::2, :]   # even positions
-            right = h[:, 1::2, :]  # odd positions
-            h = self.merge(torch.cat([left, right], dim=-1))  # (B, T_cur//2, D)
-            # Broadcast merged representation back to original positions
-            h_up = h.repeat_interleave(2 ** (scale), dim=1)[:, :T, :]
-            context = context + 0.1 * h_up  # small residual from each level
-            scale += 1
-
-        return context
-
-
 class PoleLayer(nn.Module):
     """
     A single layer: pole-parameterized recurrence + feedforward + residual.
@@ -201,14 +167,10 @@ class PoleLayer(nn.Module):
         self.ff_gate = nn.Linear(dim, dim * 3)
         self.ff_value = nn.Linear(dim, dim * 3)
         self.ff_out = nn.Linear(dim * 3, dim)
-        # Phase 13: Holographic tree for hierarchical context
-        self.holo = HolographicMerge(dim)
 
     def forward(self, x):
         # Pole recurrence with residual
         x = x + self.pole_unit(self.norm1(x))
-        # Holographic context mixing
-        x = self.holo(x)
         # SwiGLU feedforward with residual
         h = self.norm2(x)
         x = x + self.ff_out(F.silu(self.ff_gate(h)) * self.ff_value(h))
