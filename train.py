@@ -237,6 +237,10 @@ class PoleModel(nn.Module):
                     target_omega_scale = 0.5 + 1.0 * head_scale
                     layer.pole_unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
 
+                    # Initialize dt per head: fast heads get small dt, slow heads get large dt
+                    target_log_dt = -1.0 + 2.0 * head_scale  # range [-1, 1] -> dt in [0.37, 2.72]
+                    layer.pole_unit.log_dt[h].fill_(target_log_dt)
+
     def forward(self, idx):
         """
         Args:

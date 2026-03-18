@@ -66,3 +66,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-18 02:29:00	head-add-bias	2.255588	684	120.0	496384	no
 2026-03-18 02:31:15	remove-weight-tying	2.247702	675	120.0	528896	no
 2026-03-18 02:33:44	torch-compile	2.216707	691	120.1	496128	no
+2026-03-18 02:36:17	wider-pole-init	2.196099	704	120.0	496128	yes
