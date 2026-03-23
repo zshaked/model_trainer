@@ -14,10 +14,16 @@ It outputs val_bpb (validation bits per byte) as the single evaluation metric.
 
 import time
 import sys
+import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Setup deterministic seed if provided
+SEED = int(os.environ.get("SEED", 42))
+torch.manual_seed(SEED)
+np.random.seed(SEED)
 
 # Import fixed constants from prepare.py
 from prepare import (
