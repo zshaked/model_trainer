@@ -164,3 +164,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-30 18:03:38	hidden-64-all-improvements	2.494508	607	120.1	83220	no
 2026-03-30 18:06:08	no-weight-tying	2.490512	408	120.1	198752	no
 2026-03-30 18:08:40	1-layer-all-improvements	2.475886	1449	120.0	99424	no
+2026-03-30 18:11:39	batch-16	2.289074	1702	120.0	174176	yes
