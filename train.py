@@ -20,6 +20,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Compatibility: nn.RMSNorm was added in PyTorch 2.4
+if hasattr(nn, 'RMSNorm'):
+    RMSNorm = nn.RMSNorm
+else:
+    class RMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-8):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.ones(dim))
+        def forward(self, x):
+            rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+            return x / rms * self.weight
+
 # Setup deterministic seed if provided
 SEED = int(os.environ.get("SEED", 42))
 torch.manual_seed(SEED)
@@ -161,8 +174,8 @@ class PoleLayer(nn.Module):
     def __init__(self, dim, hidden_dim):
         super().__init__()
         self.pole_unit = PoleUnit(dim, hidden_dim)
-        self.norm1 = nn.RMSNorm(dim)
-        self.norm2 = nn.RMSNorm(dim)
+        self.norm1 = RMSNorm(dim)
+        self.norm2 = RMSNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, dim * 4),
             nn.GELU(),
@@ -190,7 +203,7 @@ class PoleModel(nn.Module):
         self.layers = nn.ModuleList([
             PoleLayer(dim, hidden_dim) for _ in range(num_layers)
         ])
-        self.norm_out = nn.RMSNorm(dim)
+        self.norm_out = RMSNorm(dim)
         self.head = nn.Linear(dim, vocab_size, bias=False)
 
         # Weight tying
