@@ -16,3 +16,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-17 03:14:25	hidden-128-to-192-fft	3.119786	735	120.0	938304	no
 2026-03-17 03:16:51	layers-2-to-3-fft	3.069780	878	120.0	626944	no
 2026-03-30 08:15:00	transformer-baseline-comparison	3.581233	370	120.2	427904	no
+2026-03-30 08:35:00	lstm-baseline-comparison	2.780177	390	120.0	412544	no
