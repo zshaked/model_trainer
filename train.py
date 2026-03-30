@@ -166,14 +166,78 @@ class PoleUnit(nn.Module):
         return output
 
 
+class TransformerUnit(nn.Module):
+    """
+    Causal multi-head self-attention — drop-in replacement for PoleUnit.
+    Used for matched baseline comparison against the pole-parameterized model.
+    """
+
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = input_dim // num_heads
+        assert input_dim % num_heads == 0, f"input_dim ({input_dim}) must be divisible by num_heads ({num_heads})"
+        self.scale = self.head_dim ** -0.5
+        self.qkv = nn.Linear(input_dim, 3 * input_dim, bias=False)
+        self.out_proj = nn.Linear(input_dim, input_dim, bias=False)
+
+    def forward(self, x):
+        B, T, D = x.shape
+        H = self.num_heads
+        qkv = self.qkv(x).reshape(B, T, 3, H, self.head_dim)
+        q, k, v = qkv.unbind(2)  # each (B, T, H, head_dim)
+        q = q.transpose(1, 2)  # (B, H, T, head_dim)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B, H, T, T)
+        causal_mask = torch.ones(T, T, device=x.device, dtype=torch.bool).tril()
+        attn = attn.masked_fill(~causal_mask, float('-inf'))
+        attn = F.softmax(attn, dim=-1)
+        out = (attn @ v).transpose(1, 2).reshape(B, T, D)  # (B, T, D)
+        return self.out_proj(out)
+
+
+class LSTMUnit(nn.Module):
+    """
+    LSTM-based sequence unit — drop-in replacement for PoleUnit.
+    Used for matched baseline comparison against the pole-parameterized model.
+    Uses a single LSTM layer with the same input/output dimensions.
+    """
+
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        # LSTM: 4 gates, each needs (input→hidden) and (hidden→hidden) weights
+        # To match param count better, use hidden_dim // 2 as LSTM hidden size
+        self.lstm_hidden = hidden_dim // 2
+        self.lstm = nn.LSTM(input_dim, self.lstm_hidden, batch_first=True)
+        self.out_proj = nn.Linear(self.lstm_hidden, input_dim, bias=False)
+
+    def forward(self, x):
+        B, T, D = x.shape
+        # LSTM processes sequence; no explicit hidden state carried across batches
+        lstm_out, _ = self.lstm(x)  # (B, T, lstm_hidden)
+        return self.out_proj(lstm_out)  # (B, T, input_dim)
+
+
+# MODEL_TYPE: switch between "pole", "transformer", "lstm" for baseline comparison
+MODEL_TYPE = "pole"
+
+
 class PoleLayer(nn.Module):
     """
-    A single layer: pole-parameterized recurrence + feedforward + residual.
+    A single layer: sequence unit + feedforward + residual.
+    Uses PoleUnit or TransformerUnit depending on MODEL_TYPE.
     """
 
     def __init__(self, dim, hidden_dim):
         super().__init__()
-        self.pole_unit = PoleUnit(dim, hidden_dim)
+        if MODEL_TYPE == "transformer":
+            self.pole_unit = TransformerUnit(dim, hidden_dim)
+        elif MODEL_TYPE == "lstm":
+            self.pole_unit = LSTMUnit(dim, hidden_dim)
+        else:
+            self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         self.ff = nn.Sequential(
@@ -183,7 +247,7 @@ class PoleLayer(nn.Module):
         )
 
     def forward(self, x):
-        # Pole recurrence with residual
+        # Sequence unit with residual
         x = x + self.pole_unit(self.norm1(x))
         # Feedforward with residual
         x = x + self.ff(self.norm2(x))
@@ -214,29 +278,19 @@ class PoleModel(nn.Module):
 
     def _init_poles(self):
         """Initialize poles so heads span different timescale bands.
-        Within each layer:
-        - Head 0: very fast decay (large negative sigma)
-        - Head 1: fast decay
-        - Head 2: slow decay
-        - Head 3: very slow decay (sigma near 0)
+        No-op for non-pole MODEL_TYPEs.
         """
+        if MODEL_TYPE != "pole":
+            return
         for i, layer in enumerate(self.layers):
             n_layers = len(self.layers)
-            # Layer-based variation: early layers faster than later layers
             layer_decay_scale = 0.7 + 0.3 * (i / max(n_layers - 1, 1))
-
             with torch.no_grad():
-                # Initialize each head with different sigma ranges
                 for h in range(NUM_HEADS):
-                    # Head 0 (h=0): fast, Head 3 (h=3): slow
                     head_scale = h / max(NUM_HEADS - 1, 1)
-                    # Sigma ranges from -3.0 (fast) to -0.3 (slow), scaled by layer
                     target_sigma = -3.0 + 2.7 * head_scale
                     target_sigma *= layer_decay_scale
-
                     layer.pole_unit.raw_sigma[h].fill_(-target_sigma)
-
-                    # Spread of oscillation frequencies
                     target_omega_scale = 0.3 + 0.4 * head_scale
                     layer.pole_unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
 
@@ -270,12 +324,13 @@ class PoleModel(nn.Module):
         return loss
 
     def get_pole_stats(self):
-        """Return pole statistics for logging."""
+        """Return pole statistics for logging. Returns None for non-pole models."""
+        if MODEL_TYPE != "pole":
+            return None
         all_sigma = []
         all_omega = []
         for layer in self.layers:
             sigma, omega = layer.pole_unit.get_poles()
-            # Flatten heads: (num_heads, head_dim) -> (hidden_dim,)
             sigma_flat = sigma.reshape(-1)
             omega_flat = omega.reshape(-1)
             all_sigma.append(sigma_flat.detach().cpu())
@@ -367,12 +422,15 @@ def train():
 
     val_bpb = evaluate_model(model_forward, val_data, device=device)
 
-    # Print pole statistics
+    # Print pole statistics (only for pole model)
     pole_stats = model.get_pole_stats()
-    print(f"\nPole statistics:")
-    for i in range(NUM_LAYERS):
-        print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
-              f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+    if pole_stats is not None:
+        print(f"\nPole statistics:")
+        for i in range(NUM_LAYERS):
+            print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
+                  f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+    else:
+        print(f"\nModel type: {MODEL_TYPE} (no pole statistics)")
 
     # === RESULT LINE — parsed by the experiment loop ===
     print(f"\n=== RESULT val_bpb={val_bpb:.6f} steps={step} time={total_time:.1f}s params={n_params} ===")
