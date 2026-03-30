@@ -26,3 +26,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-30 09:20:00	torch-compile-reduce-overhead	2.729413	723	120.1	428928	yes
 2026-03-30 09:30:00	warmup-20-to-50-schedule-750	2.613620	761	120.0	428928	yes
 2026-03-30 09:35:00	higher-lr-5e3-compiled	2.571572	705	120.1	428928	yes
+2026-03-30 09:40:00	lr-7e3	2.519194	741	120.0	428928	yes
