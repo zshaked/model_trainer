@@ -106,7 +106,7 @@ class PoleUnit(nn.Module):
         # Output projection
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
 
-        # Mixing gate
+        # Mixing gate: uses both input and recurrent state
         self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
 
     def get_poles(self):
@@ -141,18 +141,23 @@ class PoleUnit(nn.Module):
         # Project input to hidden space
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
 
-        # Build causal convolution kernel via FFT (parallel, O(T log T))
-        # kernel[t] = z^t = |z|^t * cos(angle*t)
+        # Build causal convolution kernels — both real (cos) and imaginary (sin) parts
+        # kernel_real[t] = |z|^t * cos(angle*t), kernel_imag[t] = |z|^t * sin(angle*t)
+        # Split hidden_dim: first half uses cos, second half uses sin kernel
+        half_H = self.hidden_dim // 2
         t_idx = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(1)  # (T, 1)
         log_mag = torch.log(z_mag.clamp(min=1e-8))  # (hidden_dim,)
         kernel_mag = torch.exp(t_idx * log_mag.unsqueeze(0))  # (T, hidden_dim)
         kernel_phase = t_idx * z_angle.unsqueeze(0)  # (T, hidden_dim)
-        kernel_real = kernel_mag * torch.cos(kernel_phase)  # (T, hidden_dim)
+        # Use real kernel for first half, imaginary kernel for second half
+        kernel_first = kernel_mag[:, :half_H] * torch.cos(kernel_phase[:, :half_H])
+        kernel_second = kernel_mag[:, half_H:] * torch.sin(kernel_phase[:, half_H:])
+        kernel_combined = torch.cat([kernel_first, kernel_second], dim=1)  # (T, hidden_dim)
 
         # Causal convolution via FFT
         fft_len = 2 * T
         x_f = torch.fft.rfft(x_proj.transpose(1, 2), n=fft_len, dim=-1)  # (B, H, fft_len//2+1)
-        k_f = torch.fft.rfft(kernel_real.T, n=fft_len, dim=-1)  # (H, fft_len//2+1)
+        k_f = torch.fft.rfft(kernel_combined.T, n=fft_len, dim=-1)  # (H, fft_len//2+1)
         h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, H, T)
         h_seq = h_seq.transpose(1, 2)  # (B, T, H)
 
@@ -241,9 +246,9 @@ class PoleLayer(nn.Module):
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 2),
             nn.GELU(),
-            nn.Linear(dim * 4, dim),
+            nn.Linear(dim * 2, dim),
         )
 
     def forward(self, x):
@@ -374,7 +379,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 1100  # Estimated total steps in TIME_BUDGET (smaller model: ~1000+ steps/120s)
+    EST_TOTAL_STEPS = 1100  # Estimated total steps in TIME_BUDGET (hidden=96, 2x FF: ~1100 steps/120s)
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
