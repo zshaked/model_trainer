@@ -144,9 +144,8 @@ class PoleUnit(nn.Module):
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
 
         # Build causal convolution kernels — both real (cos) and imaginary (sin) parts
-        # kernel_real[t] = |z|^t * cos(angle*t), kernel_imag[t] = |z|^t * sin(angle*t)
-        # Split hidden_dim: first half uses cos, second half uses sin kernel
-        half_H = self.hidden_dim // 2
+        # Split: 75% cos + 25% sin
+        half_H = 3 * self.hidden_dim // 4  # 72 cos, 24 sin
         t_idx = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(1)  # (T, 1)
         log_mag = torch.log(z_mag.clamp(min=1e-8))  # (hidden_dim,)
         kernel_mag = torch.exp(t_idx * log_mag.unsqueeze(0))  # (T, hidden_dim)
@@ -248,8 +247,7 @@ class PoleLayer(nn.Module):
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         # GEGLU FF: matched params to 2x GELU FF (dim→256 split to 128+128, W2: 128→dim)
-        ff_mid = (dim * 2 * dim) // (dim + dim // 2 + dim)  # solve for equal param count ≈128
-        ff_mid = dim + dim // 3  # ≈128 for dim=96: 96+32=128
+        ff_mid = dim + dim // 3  # 128 for dim=96
         self.ff_w1 = nn.Linear(dim, ff_mid * 2)  # 96→256
         self.ff_w2 = nn.Linear(ff_mid, dim)       # 128→96
 
