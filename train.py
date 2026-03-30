@@ -399,7 +399,7 @@ def train():
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
         scheduler.step()
 
