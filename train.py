@@ -361,6 +361,10 @@ def train():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
+    # Compile model for faster execution (PyTorch >= 2.0)
+    if hasattr(torch, 'compile'):
+        model = torch.compile(model, mode="reduce-overhead")
+
     # Optimizer
     optimizer = torch.optim.AdamW(
         model.parameters(),
