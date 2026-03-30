@@ -53,7 +53,7 @@ NUM_LAYERS = 2          # Number of pole-parameterized layers
 NUM_HEADS = 4           # Number of pole heads for multi-head structure
 LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
-WARMUP_STEPS = 20       # Linear warmup steps
+WARMUP_STEPS = 50       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
 # ============================================================================
@@ -374,7 +374,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 700  # Estimated total steps in TIME_BUDGET (FFT model: ~670 steps/120s)
+    EST_TOTAL_STEPS = 750  # Estimated total steps in TIME_BUDGET (compiled FFT model: ~720 steps/120s)
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
