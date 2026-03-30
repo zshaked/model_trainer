@@ -108,6 +108,8 @@ class PoleUnit(nn.Module):
 
         # Mixing gate: uses both input and recurrent state
         self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
+        # Norm before output projection to stabilize W_out input scale
+        self.h_norm = RMSNorm(hidden_dim)
 
     def get_poles(self):
         """Return (sigma, omega) with sigma constrained < 0.
@@ -166,8 +168,8 @@ class PoleUnit(nn.Module):
         g = torch.sigmoid(self.gate(gate_input))
         h_gated = g * h_seq
 
-        # Project back to input dim
-        output = self.W_out(h_gated)
+        # Normalize gated state before output projection
+        output = self.W_out(self.h_norm(h_gated))
         return output
 
 
