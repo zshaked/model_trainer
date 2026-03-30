@@ -51,7 +51,7 @@ from prepare import (
 HIDDEN_DIM = 128        # Hidden state dimension
 NUM_LAYERS = 2          # Number of pole-parameterized layers
 NUM_HEADS = 4           # Number of pole heads for multi-head structure
-LEARNING_RATE = 1e-2    # Learning rate
+LEARNING_RATE = 1.5e-2  # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
 WARMUP_STEPS = 50       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
