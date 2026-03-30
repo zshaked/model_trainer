@@ -247,17 +247,19 @@ class PoleLayer(nn.Module):
             self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 2),
-            nn.GELU(),
-            nn.Linear(dim * 2, dim),
-        )
+        # GEGLU FF: matched params to 2x GELU FF (dim→256 split to 128+128, W2: 128→dim)
+        ff_mid = (dim * 2 * dim) // (dim + dim // 2 + dim)  # solve for equal param count ≈128
+        ff_mid = dim + dim // 3  # ≈128 for dim=96: 96+32=128
+        self.ff_w1 = nn.Linear(dim, ff_mid * 2)  # 96→256
+        self.ff_w2 = nn.Linear(ff_mid, dim)       # 128→96
 
     def forward(self, x):
         # Sequence unit with residual
         x = x + self.pole_unit(self.norm1(x))
-        # Feedforward with residual
-        x = x + self.ff(self.norm2(x))
+        # GEGLU feedforward with residual
+        h = self.norm2(x)
+        x1, x2 = self.ff_w1(h).chunk(2, dim=-1)
+        x = x + self.ff_w2(x1 * F.gelu(x2))
         return x
 
 
