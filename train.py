@@ -12,6 +12,7 @@ The model does character-level language modeling on tiny shakespeare.
 It outputs val_bpb (validation bits per byte) as the single evaluation metric.
 """
 
+import math
 import time
 import sys
 import os
