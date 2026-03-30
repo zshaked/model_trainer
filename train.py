@@ -402,7 +402,7 @@ def train():
         if elapsed >= TIME_BUDGET:
             break
 
-        inputs, targets = get_batch(train_data)
+        inputs, targets = get_batch(train_data, batch_size=16)
         loss = model.compute_loss(inputs, targets)
 
         optimizer.zero_grad()
