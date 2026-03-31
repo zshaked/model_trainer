@@ -29,3 +29,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-31 11:58:53	hybrid-pole-attn	2.630234	199	120.4	660352	no
 2026-03-31 12:01:46	log-uniform-omega-init	2.600137	342	120.1	529024	no
 2026-03-31 12:04:31	batch16-clip0p5	2.459903	436	120.2	529024	yes
+2026-03-31 12:06:58	batch8	2.378175	910	120.1	529024	yes
