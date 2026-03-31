@@ -18,3 +18,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-30 00:00:00	pole-baseline-multihead-bilinear	3.022833	515	120.2	428928	yes
 2026-03-30 00:00:00	transformer-baseline-matched-params	3.601923	463	120.1	428928	yes
 2026-03-30 00:00:00	lstm-baseline-matched-params	2.881604	579	120.2	429432	yes
+2026-03-30 00:00:00	pole-cosine-schedule-fix	2.787878	506	120.0	428928	yes
