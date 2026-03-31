@@ -207,10 +207,10 @@ class PoleLayer(nn.Module):
             self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
-        # SwiGLU feedforward: two parallel projections, gate with SiLU
-        self.ff_gate = nn.Linear(dim, dim * 3)
-        self.ff_value = nn.Linear(dim, dim * 3)
-        self.ff_out = nn.Linear(dim * 3, dim)
+        # SwiGLU feedforward: two parallel projections, gate with SiLU (2x expansion)
+        self.ff_gate = nn.Linear(dim, dim * 2)
+        self.ff_value = nn.Linear(dim, dim * 2)
+        self.ff_out = nn.Linear(dim * 2, dim)
 
     def forward(self, x):
         # Pole recurrence with residual
