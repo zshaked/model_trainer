@@ -47,7 +47,7 @@ from prepare import (
 # Hyperparameters (the agent may tune these)
 # ============================================================================
 
-HIDDEN_DIM = 128        # Hidden state dimension
+HIDDEN_DIM = 192        # Hidden state dimension (increased from 128)
 NUM_LAYERS = 2          # Number of pole-parameterized layers
 NUM_HEADS = 4           # Number of pole heads for multi-head structure
 LEARNING_RATE = 3e-3    # Learning rate
@@ -387,7 +387,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 130  # Estimated total steps in TIME_BUDGET
+    EST_TOTAL_STEPS = 800  # Estimated total steps in TIME_BUDGET (FFT pole model runs ~800-1200 steps)
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
