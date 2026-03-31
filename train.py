@@ -369,7 +369,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 900  # Estimated total steps in TIME_BUDGET (batch=8 gets ~4x steps)
+    EST_TOTAL_STEPS = 1300  # Estimated total steps with torch.compile + batch=8
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
