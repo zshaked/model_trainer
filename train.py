@@ -238,7 +238,7 @@ class PoleModel(nn.Module):
         self.layers = nn.ModuleList([
             PoleLayer(dim, hidden_dim) for _ in range(num_layers)
         ])
-        self.norm_out = nn.RMSNorm(dim)
+        self.norm_out = nn.LayerNorm(dim)
         self.head = nn.Linear(dim, vocab_size, bias=False)
 
         # Weight tying
