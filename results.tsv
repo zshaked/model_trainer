@@ -24,3 +24,4 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-30 00:00:00	pole-slow-init-sigma-1.5-to-0.05	2.749619	513	120.0	428928	yes
 2026-03-30 00:00:00	hybrid-pole-plus-attention-ff2x	2.971043	284	120.3	429696	no
 2026-03-30 00:00:00	pole-8heads-slow-init	2.731502	467	120.2	428928	yes
+2026-03-30 00:00:00	pole-lr-5e-3	2.681589	567	120.1	428928	yes
