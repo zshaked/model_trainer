@@ -353,6 +353,13 @@ def train():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
+    # torch.compile for faster forward pass
+    try:
+        model = torch.compile(model)
+        print("torch.compile: enabled")
+    except Exception as e:
+        print(f"torch.compile: skipped ({e})")
+
     # Optimizer
     optimizer = torch.optim.AdamW(
         model.parameters(),
