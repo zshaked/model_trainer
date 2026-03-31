@@ -111,6 +111,8 @@ class PoleUnit(nn.Module):
         # Output projection with norm for stable scale
         self.h_norm = nn.RMSNorm(hidden_dim)
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
+        # Output gate: input-dependent scaling (common in SSM architectures)
+        self.out_gate = nn.Linear(input_dim, input_dim, bias=False)
 
         # Mixing gate with hyperpolarization: includes h[t-1]
         self.gate = nn.Linear(input_dim + hidden_dim * 2, hidden_dim)
@@ -171,8 +173,9 @@ class PoleUnit(nn.Module):
         g = torch.sigmoid(self.gate(gate_input))
         h_gated = g * h_seq
 
-        # Normalize + project back to input dim
-        output = self.W_out(self.h_norm(h_gated))
+        # Normalize, project, then apply output gate for input-dependent scaling
+        h_out = self.W_out(self.h_norm(h_gated))
+        output = F.silu(self.out_gate(x)) * h_out
         return output
 
 
