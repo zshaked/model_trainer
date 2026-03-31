@@ -31,6 +31,17 @@ from prepare import (
     prepare_data, get_batch, evaluate_model, compute_bpb,
 )
 
+# RMSNorm was added in PyTorch 2.4 — provide a compatible fallback
+if hasattr(nn, 'RMSNorm'):
+    RMSNorm = RMSNorm
+else:
+    class RMSNorm(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(dim))
+        def forward(self, x):
+            return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-8) * self.weight
+
 # ============================================================================
 # Hyperparameters (the agent may tune these)
 # ============================================================================
@@ -42,6 +53,10 @@ LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
 WARMUP_STEPS = 20       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
+
+# Unit type: "pole", "transformer", or "lstm"
+# Controls which sequence mixing unit is used inside each layer.
+UNIT_TYPE = "pole"
 
 # ============================================================================
 # Phase 1: Pole-Parameterized Unit with Multi-Head Structure
@@ -153,16 +168,74 @@ class PoleUnit(nn.Module):
         return output
 
 
+class TransformerUnit(nn.Module):
+    """
+    Causal multi-head self-attention unit — baseline for PoleUnit comparison.
+
+    Same interface as PoleUnit: takes (B, T, input_dim) -> (B, T, input_dim).
+    Uses nn.MultiheadAttention with a causal additive mask.
+
+    Parameter count with input_dim=128, num_heads=4:
+      in_proj (3*128*128) + in_proj_bias (3*128) + out_proj (128*128+128) = 66,048
+    This matches PoleUnit's ~66K params exactly.
+    """
+
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(input_dim, num_heads, batch_first=True)
+
+    def forward(self, x):
+        B, T, D = x.shape
+        # Additive causal mask: -inf above the diagonal, 0 on and below
+        causal_mask = torch.triu(
+            torch.full((T, T), float('-inf'), device=x.device, dtype=x.dtype),
+            diagonal=1
+        )
+        out, _ = self.attn(x, x, x, attn_mask=causal_mask)
+        return out
+
+
+class LSTMUnit(nn.Module):
+    """
+    LSTM-based sequence mixing unit — baseline for PoleUnit comparison.
+
+    Same interface as PoleUnit: takes (B, T, input_dim) -> (B, T, input_dim).
+    Uses nn.LSTM with lstm_hidden=71 (tuned to match ~66K params) + output projection.
+
+    Parameter count with input_dim=128, lstm_hidden=71:
+      LSTM: 4*71*128 + 4*71*71 + 8*71 = 40448 + 20164 + 568 = 61180
+      W_out: 71*128 + 128 = 9216
+      Total ≈ 66,172  (vs PoleUnit's 66,048 — 0.2% difference)
+    """
+
+    LSTM_HIDDEN = 71  # Tuned to match ~66K params total
+
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
+        super().__init__()
+        self.lstm = nn.LSTM(input_dim, self.LSTM_HIDDEN, batch_first=True)
+        self.W_out = nn.Linear(self.LSTM_HIDDEN, input_dim)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.W_out(out)
+
+
 class PoleLayer(nn.Module):
     """
-    A single layer: pole-parameterized recurrence + feedforward + residual.
+    A single layer: sequence mixing unit + feedforward + residual.
+    The mixing unit is selected by the global UNIT_TYPE flag.
     """
 
     def __init__(self, dim, hidden_dim):
         super().__init__()
-        self.pole_unit = PoleUnit(dim, hidden_dim)
-        self.norm1 = nn.RMSNorm(dim)
-        self.norm2 = nn.RMSNorm(dim)
+        if UNIT_TYPE == "transformer":
+            self.unit = TransformerUnit(dim, hidden_dim)
+        elif UNIT_TYPE == "lstm":
+            self.unit = LSTMUnit(dim, hidden_dim)
+        else:
+            self.unit = PoleUnit(dim, hidden_dim)
+        self.norm1 = RMSNorm(dim)
+        self.norm2 = RMSNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, dim * 4),
             nn.GELU(),
@@ -170,8 +243,8 @@ class PoleLayer(nn.Module):
         )
 
     def forward(self, x):
-        # Pole recurrence with residual
-        x = x + self.pole_unit(self.norm1(x))
+        # Sequence mixing with residual
+        x = x + self.unit(self.norm1(x))
         # Feedforward with residual
         x = x + self.ff(self.norm2(x))
         return x
@@ -190,14 +263,15 @@ class PoleModel(nn.Module):
         self.layers = nn.ModuleList([
             PoleLayer(dim, hidden_dim) for _ in range(num_layers)
         ])
-        self.norm_out = nn.RMSNorm(dim)
+        self.norm_out = RMSNorm(dim)
         self.head = nn.Linear(dim, vocab_size, bias=False)
 
         # Weight tying
         self.head.weight = self.embedding.weight
 
-        # Initialize poles with spread of timescales per head
-        self._init_poles()
+        # Initialize poles with spread of timescales per head (only for pole unit)
+        if UNIT_TYPE == "pole":
+            self._init_poles()
 
     def _init_poles(self):
         """Initialize poles so heads span different timescale bands.
@@ -206,6 +280,7 @@ class PoleModel(nn.Module):
         - Head 1: fast decay
         - Head 2: slow decay
         - Head 3: very slow decay (sigma near 0)
+        Only called when UNIT_TYPE == "pole".
         """
         for i, layer in enumerate(self.layers):
             n_layers = len(self.layers)
@@ -221,11 +296,11 @@ class PoleModel(nn.Module):
                     target_sigma = -3.0 + 2.7 * head_scale
                     target_sigma *= layer_decay_scale
 
-                    layer.pole_unit.raw_sigma[h].fill_(-target_sigma)
+                    layer.unit.raw_sigma[h].fill_(-target_sigma)
 
                     # Spread of oscillation frequencies
                     target_omega_scale = 0.3 + 0.4 * head_scale
-                    layer.pole_unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
+                    layer.unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
 
     def forward(self, idx):
         """
@@ -257,12 +332,13 @@ class PoleModel(nn.Module):
         return loss
 
     def get_pole_stats(self):
-        """Return pole statistics for logging."""
+        """Return pole statistics for logging (only meaningful for UNIT_TYPE='pole')."""
+        if UNIT_TYPE != "pole":
+            return None
         all_sigma = []
         all_omega = []
         for layer in self.layers:
-            sigma, omega = layer.pole_unit.get_poles()
-            # Flatten heads: (num_heads, head_dim) -> (hidden_dim,)
+            sigma, omega = layer.unit.get_poles()
             sigma_flat = sigma.reshape(-1)
             omega_flat = omega.reshape(-1)
             all_sigma.append(sigma_flat.detach().cpu())
@@ -289,6 +365,7 @@ def train():
     print(f"Train tokens: {len(train_data):,}, Val tokens: {len(val_data):,}")
 
     # Build model
+    print(f"Unit type: {UNIT_TYPE}")
     model = PoleModel().to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -354,12 +431,13 @@ def train():
 
     val_bpb = evaluate_model(model_forward, val_data, device=device)
 
-    # Print pole statistics
+    # Print pole statistics (only for pole unit)
     pole_stats = model.get_pole_stats()
-    print(f"\nPole statistics:")
-    for i in range(NUM_LAYERS):
-        print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
-              f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+    if pole_stats is not None:
+        print(f"\nPole statistics:")
+        for i in range(NUM_LAYERS):
+            print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
+                  f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
 
     # === RESULT LINE — parsed by the experiment loop ===
     print(f"\n=== RESULT val_bpb={val_bpb:.6f} steps={step} time={total_time:.1f}s params={n_params} ===")
