@@ -20,6 +20,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Compatibility shim: nn.RMSNorm was added in PyTorch 2.4
+if not hasattr(nn, 'RMSNorm'):
+    class _RMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-6):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.ones(dim))
+        def forward(self, x):
+            rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+            return x / rms * self.weight
+    nn.RMSNorm = _RMSNorm
+
 # Setup deterministic seed if provided
 SEED = int(os.environ.get("SEED", 42))
 torch.manual_seed(SEED)
