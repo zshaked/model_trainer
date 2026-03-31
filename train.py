@@ -50,9 +50,9 @@ from prepare import (
 HIDDEN_DIM = 128        # Hidden state dimension
 NUM_LAYERS = 2          # Number of pole-parameterized layers
 NUM_HEADS = 4           # Number of pole heads for multi-head structure
-LEARNING_RATE = 3e-3    # Learning rate
-WEIGHT_DECAY = 0.01     # Weight decay
-WARMUP_STEPS = 20       # Linear warmup steps
+LEARNING_RATE = 7e-3    # Learning rate
+WEIGHT_DECAY = 0.05     # Weight decay
+WARMUP_STEPS = 40       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
 # ============================================================================
@@ -102,11 +102,18 @@ class PoleUnit(nn.Module):
         # Input projection
         self.W_in = nn.Linear(input_dim, hidden_dim, bias=False)
 
-        # Output projection
+        # Short causal conv for local patterns (depthwise, k=4)
+        self.short_conv = nn.Conv1d(
+            hidden_dim, hidden_dim, kernel_size=4, padding=3,
+            groups=hidden_dim, bias=False
+        )
+
+        # Output projection with norm for stable scale
+        self.h_norm = nn.RMSNorm(hidden_dim)
         self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
 
-        # Mixing gate
-        self.gate = nn.Linear(input_dim + hidden_dim, hidden_dim)
+        # Mixing gate with hyperpolarization: includes h[t-1]
+        self.gate = nn.Linear(input_dim + hidden_dim * 2, hidden_dim)
 
     def get_poles(self):
         """Return (sigma, omega) with sigma constrained < 0.
@@ -137,8 +144,11 @@ class PoleUnit(nn.Module):
         z_mag = torch.abs(z)  # (hidden_dim,)
         z_angle = torch.angle(z)  # (hidden_dim,)
 
-        # Project input to hidden space
+        # Project input to hidden space + short causal conv for local context
         x_proj = self.W_in(x)  # (B, T, hidden_dim)
+        x_proj = F.silu(
+            self.short_conv(x_proj.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        )  # causal trim + activation
 
         # Build causal convolution kernel via FFT (parallel, O(T log T))
         # kernel[t] = z^t = |z|^t * cos(angle*t)
@@ -155,13 +165,14 @@ class PoleUnit(nn.Module):
         h_seq = torch.fft.irfft(x_f * k_f.unsqueeze(0), n=fft_len, dim=-1)[..., :T]  # (B, H, T)
         h_seq = h_seq.transpose(1, 2)  # (B, T, H)
 
-        # Gate: mix hidden state with input
-        gate_input = torch.cat([x, h_seq], dim=-1)
+        # Gate with hyperpolarization: include h[t-1] for refractory dynamics
+        h_shifted = F.pad(h_seq[:, :-1, :], (0, 0, 1, 0))  # h[t-1], causal
+        gate_input = torch.cat([x, h_seq, h_shifted], dim=-1)
         g = torch.sigmoid(self.gate(gate_input))
         h_gated = g * h_seq
 
-        # Project back to input dim
-        output = self.W_out(h_gated)
+        # Normalize + project back to input dim
+        output = self.W_out(self.h_norm(h_gated))
         return output
 
 
@@ -180,7 +191,7 @@ class LSTMUnit(nn.Module):
 
 
 # MODEL_TYPE: "pole" or "lstm" for baseline comparison
-MODEL_TYPE = "lstm"
+MODEL_TYPE = "pole"
 
 
 class PoleLayer(nn.Module):
@@ -196,17 +207,17 @@ class PoleLayer(nn.Module):
             self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Linear(dim * 4, dim),
-        )
+        # SwiGLU feedforward: two parallel projections, gate with SiLU
+        self.ff_gate = nn.Linear(dim, dim * 3)
+        self.ff_value = nn.Linear(dim, dim * 3)
+        self.ff_out = nn.Linear(dim * 3, dim)
 
     def forward(self, x):
         # Pole recurrence with residual
         x = x + self.pole_unit(self.norm1(x))
-        # Feedforward with residual
-        x = x + self.ff(self.norm2(x))
+        # SwiGLU feedforward with residual
+        h = self.norm2(x)
+        x = x + self.ff_out(F.silu(self.ff_gate(h)) * self.ff_value(h))
         return x
 
 
@@ -246,17 +257,21 @@ class PoleModel(nn.Module):
             with torch.no_grad():
                 # Initialize each head with different sigma ranges
                 for h in range(NUM_HEADS):
-                    # Head 0 (h=0): fast, Head 3 (h=3): slow
+                    # Head 0 (h=0): fast, Head N-1 (h=N-1): slow
                     head_scale = h / max(NUM_HEADS - 1, 1)
-                    # Sigma ranges from -3.0 (fast) to -0.3 (slow), scaled by layer
-                    target_sigma = -3.0 + 2.7 * head_scale
+                    # Wider sigma range: -5.0 (fast) to -0.1 (slow), scaled by layer
+                    target_sigma = -5.0 + 4.9 * head_scale
                     target_sigma *= layer_decay_scale
 
                     layer.pole_unit.raw_sigma[h].fill_(-target_sigma)
 
-                    # Spread of oscillation frequencies
-                    target_omega_scale = 0.3 + 0.4 * head_scale
+                    # Wider spread of oscillation frequencies
+                    target_omega_scale = 0.5 + 1.0 * head_scale
                     layer.pole_unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
+
+                    # Per-head log_dt: fast heads small dt, slow heads large dt
+                    target_log_dt = -1.0 + 2.0 * head_scale  # dt in [0.37, 2.72]
+                    layer.pole_unit.log_dt[h].fill_(target_log_dt)
 
     def forward(self, idx):
         """

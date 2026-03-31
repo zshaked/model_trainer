@@ -19,3 +19,5 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-31 11:32:45	lstm-baseline	CRASH				no
 2026-03-31 11:34:12	lstm-baseline	CRASH				no
 2026-03-31 11:37:03	lstm-baseline	CRASH				no
+2026-03-31 11:40:01	lstm-baseline	2.893003	570	120.2	412544	yes
+2026-03-31 11:42:37	pole-lr7e3-wd5e2	2.912344	422	120.2	428928	no
