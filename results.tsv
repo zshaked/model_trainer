@@ -17,3 +17,5 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-17 03:16:51	layers-2-to-3-fft	3.069780	878	120.0	626944	no
 2026-03-31 18:27:00	lstm-baseline	CRASH				no
 2026-03-31 18:28:27	lstm-baseline	CRASH				no
+2026-03-31 18:35:22	lstm-baseline	2.803174	573	120.2	593792	yes
+2026-03-31 18:39:58	pole-plus-self-attention	3.079212	398	120.2	560256	no
