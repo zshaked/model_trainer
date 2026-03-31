@@ -362,7 +362,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 130  # Estimated total steps in TIME_BUDGET
+    EST_TOTAL_STEPS = 500  # Estimated total steps in TIME_BUDGET (batch=16 gets ~2x steps)
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
@@ -382,12 +382,12 @@ def train():
         if elapsed >= TIME_BUDGET:
             break
 
-        inputs, targets = get_batch(train_data)
+        inputs, targets = get_batch(train_data, batch_size=16)
         loss = model.compute_loss(inputs, targets)
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
         scheduler.step()
 
