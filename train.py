@@ -55,6 +55,75 @@ WEIGHT_DECAY = 0.01     # Weight decay
 WARMUP_STEPS = 20       # Linear warmup steps
 LOG_INTERVAL = 10       # Print loss every N steps
 
+# Switch between "pole" and "lstm" via env var
+UNIT_TYPE = os.environ.get("UNIT_TYPE", "pole")
+
+# ============================================================================
+# LSTM Baseline Model
+# ============================================================================
+
+class LSTMUnit(nn.Module):
+    """LSTM-based recurrent unit. Baseline comparison for the pole model."""
+
+    def __init__(self, input_dim, hidden_dim):
+        super().__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.W_out = nn.Linear(hidden_dim, input_dim, bias=False)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.W_out(out)
+
+
+class LSTMLayer(nn.Module):
+    """Single layer: LSTM unit + feedforward + residual."""
+
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.lstm_unit = LSTMUnit(dim, hidden_dim)
+        self.norm1 = nn.RMSNorm(dim)
+        self.norm2 = nn.RMSNorm(dim)
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Linear(dim * 4, dim),
+        )
+
+    def forward(self, x):
+        x = x + self.lstm_unit(self.norm1(x))
+        x = x + self.ff(self.norm2(x))
+        return x
+
+
+class LSTMModel(nn.Module):
+    """Full LSTM sequence model: embedding -> N LSTM layers -> output projection."""
+
+    def __init__(self, vocab_size=VOCAB_SIZE, dim=HIDDEN_DIM,
+                 hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.layers = nn.ModuleList([
+            LSTMLayer(dim, hidden_dim) for _ in range(num_layers)
+        ])
+        self.norm_out = nn.RMSNorm(dim)
+        self.head = nn.Linear(dim, vocab_size, bias=False)
+        self.head.weight = self.embedding.weight
+
+    def forward(self, idx):
+        x = self.embedding(idx)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.norm_out(x)
+        return self.head(x)
+
+    def compute_loss(self, inputs, targets):
+        device = next(self.parameters()).device
+        x = torch.from_numpy(inputs.astype(np.int64)).to(device)
+        y = torch.from_numpy(targets.astype(np.int64)).to(device)
+        logits = self.forward(x)
+        return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+
+
 # ============================================================================
 # Phase 1: Pole-Parameterized Unit with Multi-Head Structure
 # ============================================================================
@@ -295,13 +364,17 @@ def train():
     device = "cpu"
     print(f"Device: {device}")
     print(f"Time budget: {TIME_BUDGET}s")
+    print(f"Unit type: {UNIT_TYPE}")
 
     # Prepare data
     train_data, val_data = prepare_data()
     print(f"Train tokens: {len(train_data):,}, Val tokens: {len(val_data):,}")
 
     # Build model
-    model = PoleModel().to(device)
+    if UNIT_TYPE == "lstm":
+        model = LSTMModel().to(device)
+    else:
+        model = PoleModel().to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
@@ -366,12 +439,13 @@ def train():
 
     val_bpb = evaluate_model(model_forward, val_data, device=device)
 
-    # Print pole statistics
-    pole_stats = model.get_pole_stats()
-    print(f"\nPole statistics:")
-    for i in range(NUM_LAYERS):
-        print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
-              f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+    # Print pole statistics (pole model only)
+    if UNIT_TYPE != "lstm":
+        pole_stats = model.get_pole_stats()
+        print(f"\nPole statistics:")
+        for i in range(NUM_LAYERS):
+            print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
+                  f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
 
     # === RESULT LINE — parsed by the experiment loop ===
     print(f"\n=== RESULT val_bpb={val_bpb:.6f} steps={step} time={total_time:.1f}s params={n_params} ===")

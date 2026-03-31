@@ -15,3 +15,5 @@ timestamp	tag	val_bpb	steps	time_s	params	kept
 2026-03-17 03:12:00	fft-parallel-conv	2.962822	1251	120.0	428928	yes
 2026-03-17 03:14:25	hidden-128-to-192-fft	3.119786	735	120.0	938304	no
 2026-03-17 03:16:51	layers-2-to-3-fft	3.069780	878	120.0	626944	no
+2026-03-31 18:27:00	lstm-baseline	CRASH				no
+2026-03-31 18:28:27	lstm-baseline	CRASH				no
