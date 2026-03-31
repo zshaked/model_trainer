@@ -292,14 +292,15 @@ class PoleModel(nn.Module):
                 for h in range(NUM_HEADS):
                     # Head 0 (h=0): fast, Head 3 (h=3): slow
                     head_scale = h / max(NUM_HEADS - 1, 1)
-                    # Sigma ranges from -3.0 (fast) to -0.3 (slow), scaled by layer
-                    target_sigma = -3.0 + 2.7 * head_scale
+                    # Sigma ranges from -1.5 (fast) to -0.05 (slow), scaled by layer
+                    # Narrower, slower range: language modeling needs more long-range memory
+                    target_sigma = -1.5 + 1.45 * head_scale
                     target_sigma *= layer_decay_scale
 
                     layer.unit.raw_sigma[h].fill_(-target_sigma)
 
-                    # Spread of oscillation frequencies
-                    target_omega_scale = 0.3 + 0.4 * head_scale
+                    # Wider oscillation frequencies to cover more spectral content
+                    target_omega_scale = 0.5 + 0.5 * head_scale
                     layer.unit.omega[h].uniform_(-target_omega_scale, target_omega_scale)
 
     def forward(self, idx):
