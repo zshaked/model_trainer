@@ -231,6 +231,7 @@ class PoleModel(nn.Module):
                  hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim)
+        self.pos_embedding = nn.Embedding(MAX_SEQ_LEN, dim)
         self.layers = nn.ModuleList([
             PoleLayer(dim, hidden_dim) for _ in range(num_layers)
         ])
@@ -239,6 +240,17 @@ class PoleModel(nn.Module):
 
         # Weight tying
         self.head.weight = self.embedding.weight
+
+        # Better init: trunc_normal for all params
+        nn.init.trunc_normal_(self.embedding.weight, std=0.02)
+        nn.init.trunc_normal_(self.pos_embedding.weight, std=0.02)
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.trunc_normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Conv1d):
+                nn.init.trunc_normal_(module.weight, std=0.02)
 
         # Initialize poles with spread of timescales per head
         self._init_poles()
@@ -280,7 +292,9 @@ class PoleModel(nn.Module):
         Returns:
             logits: (batch, seq_len, vocab_size)
         """
-        x = self.embedding(idx)
+        B, T = idx.shape
+        pos = torch.arange(T, device=idx.device)
+        x = self.embedding(idx) + self.pos_embedding(pos)
         for layer in self.layers:
             x = layer(x)
         x = self.norm_out(x)
