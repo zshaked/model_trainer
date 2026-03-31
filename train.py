@@ -252,8 +252,8 @@ class PoleModel(nn.Module):
             elif isinstance(module, nn.Conv1d):
                 nn.init.trunc_normal_(module.weight, std=0.02)
 
-        # Initialize poles with spread of timescales per head
-        self._init_poles()
+        # Skip structured pole init — let gradient descent find the right timescales
+        # self._init_poles()
 
     def _init_poles(self):
         """Initialize poles so heads span different timescale bands.
