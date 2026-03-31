@@ -165,6 +165,24 @@ class PoleUnit(nn.Module):
         return output
 
 
+class LSTMUnit(nn.Module):
+    """LSTM-based unit — drop-in for PoleUnit."""
+
+    def __init__(self, input_dim, hidden_dim, num_heads=NUM_HEADS):
+        super().__init__()
+        self.lstm_hidden = hidden_dim // 2
+        self.lstm = nn.LSTM(input_dim, self.lstm_hidden, batch_first=True)
+        self.out_proj = nn.Linear(self.lstm_hidden, input_dim, bias=False)
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        return self.out_proj(lstm_out)
+
+
+# MODEL_TYPE: "pole" or "lstm" for baseline comparison
+MODEL_TYPE = "lstm"
+
+
 class PoleLayer(nn.Module):
     """
     A single layer: pole-parameterized recurrence + feedforward + residual.
@@ -172,7 +190,10 @@ class PoleLayer(nn.Module):
 
     def __init__(self, dim, hidden_dim):
         super().__init__()
-        self.pole_unit = PoleUnit(dim, hidden_dim)
+        if MODEL_TYPE == "lstm":
+            self.pole_unit = LSTMUnit(dim, hidden_dim)
+        else:
+            self.pole_unit = PoleUnit(dim, hidden_dim)
         self.norm1 = nn.RMSNorm(dim)
         self.norm2 = nn.RMSNorm(dim)
         self.ff = nn.Sequential(
@@ -213,12 +234,10 @@ class PoleModel(nn.Module):
 
     def _init_poles(self):
         """Initialize poles so heads span different timescale bands.
-        Within each layer:
-        - Head 0: very fast decay (large negative sigma)
-        - Head 1: fast decay
-        - Head 2: slow decay
-        - Head 3: very slow decay (sigma near 0)
+        No-op for non-pole MODEL_TYPEs.
         """
+        if MODEL_TYPE != "pole":
+            return
         for i, layer in enumerate(self.layers):
             n_layers = len(self.layers)
             # Layer-based variation: early layers faster than later layers
@@ -366,12 +385,13 @@ def train():
 
     val_bpb = evaluate_model(model_forward, val_data, device=device)
 
-    # Print pole statistics
-    pole_stats = model.get_pole_stats()
-    print(f"\nPole statistics:")
-    for i in range(NUM_LAYERS):
-        print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
-              f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
+    # Print pole statistics (only for pole models)
+    if MODEL_TYPE == "pole":
+        pole_stats = model.get_pole_stats()
+        print(f"\nPole statistics:")
+        for i in range(NUM_LAYERS):
+            print(f"  Layer {i}: sigma={pole_stats['sigma_mean'][i]:.3f}±{pole_stats['sigma_std'][i]:.3f}  "
+                  f"omega={pole_stats['omega_mean'][i]:.3f}±{pole_stats['omega_std'][i]:.3f}")
 
     # === RESULT LINE — parsed by the experiment loop ===
     print(f"\n=== RESULT val_bpb={val_bpb:.6f} steps={step} time={total_time:.1f}s params={n_params} ===")
