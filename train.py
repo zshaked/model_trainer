@@ -48,7 +48,7 @@ else:
 
 HIDDEN_DIM = 128        # Hidden state dimension
 NUM_LAYERS = 2          # Number of pole-parameterized layers
-NUM_HEADS = 4           # Number of pole heads for multi-head structure
+NUM_HEADS = 8           # Number of pole heads for multi-head structure
 LEARNING_RATE = 3e-3    # Learning rate
 WEIGHT_DECAY = 0.01     # Weight decay
 WARMUP_STEPS = 20       # Linear warmup steps
@@ -224,27 +224,44 @@ class PoleLayer(nn.Module):
     """
     A single layer: sequence mixing unit + feedforward + residual.
     The mixing unit is selected by the global UNIT_TYPE flag.
+
+    For UNIT_TYPE="hybrid": pole recurrence + causal attention in parallel,
+    both with residual connections, then FF at 2x expansion to stay at ~429K params.
+    Budget per layer (dim=128): PoleUnit(66K) + TransformerUnit(66K) + FF-2x(66K) + norms(0.4K) ≈ 198K.
     """
 
     def __init__(self, dim, hidden_dim):
         super().__init__()
         if UNIT_TYPE == "transformer":
             self.unit = TransformerUnit(dim, hidden_dim)
+            ff_expand = 4
         elif UNIT_TYPE == "lstm":
             self.unit = LSTMUnit(dim, hidden_dim)
+            ff_expand = 4
+        elif UNIT_TYPE == "hybrid":
+            # Pole + attention in parallel; reduce FF to 2x to keep param budget
+            self.unit = PoleUnit(dim, hidden_dim)
+            self.attn_unit = TransformerUnit(dim, hidden_dim)
+            self.norm_attn = RMSNorm(dim)
+            ff_expand = 2
         else:
             self.unit = PoleUnit(dim, hidden_dim)
+            ff_expand = 4
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * ff_expand),
             nn.GELU(),
-            nn.Linear(dim * 4, dim),
+            nn.Linear(dim * ff_expand, dim),
         )
+        self._is_hybrid = (UNIT_TYPE == "hybrid")
 
     def forward(self, x):
         # Sequence mixing with residual
         x = x + self.unit(self.norm1(x))
+        if self._is_hybrid:
+            # Additional attention sublayer in parallel
+            x = x + self.attn_unit(self.norm_attn(x))
         # Feedforward with residual
         x = x + self.ff(self.norm2(x))
         return x
