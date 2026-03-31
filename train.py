@@ -397,7 +397,7 @@ def train():
 
     # LR scheduler with warmup + cosine decay
     import math
-    EST_TOTAL_STEPS = 500  # Estimated total steps in TIME_BUDGET (FFT model ~515 steps/120s)
+    EST_TOTAL_STEPS = 500  # Estimated total steps in TIME_BUDGET (FFT model ~500 steps/120s)
     def lr_lambda(step):
         if step < WARMUP_STEPS:
             return step / max(WARMUP_STEPS, 1)
