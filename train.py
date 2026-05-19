@@ -276,6 +276,68 @@ class PoleModel(nn.Module):
 
 
 # ============================================================================
+# Matched Baselines (Phase 2)
+# ============================================================================
+
+class LSTMModel(nn.Module):
+    def __init__(self, vocab_size=VOCAB_SIZE, dim=HIDDEN_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.lstm = nn.LSTM(dim, hidden_dim, num_layers=num_layers, batch_first=True)
+        self.norm_out = nn.RMSNorm(dim)
+        self.head = nn.Linear(hidden_dim, vocab_size, bias=False)
+        self.head.weight = self.embedding.weight
+
+    def forward(self, idx):
+        x = self.embedding(idx)
+        x, _ = self.lstm(x)
+        x = self.norm_out(x)
+        return self.head(x)
+
+    def compute_loss(self, inputs, targets):
+        device = next(self.parameters()).device
+        x = torch.from_numpy(inputs.astype(np.int64)).to(device)
+        y = torch.from_numpy(targets.astype(np.int64)).to(device)
+        logits = self.forward(x)
+        return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+    
+    def get_pole_stats(self):
+        return {"sigma_mean": [0]*NUM_LAYERS, "sigma_std": [0]*NUM_LAYERS, "omega_mean": [0]*NUM_LAYERS, "omega_std": [0]*NUM_LAYERS}
+
+
+class TransformerModel(nn.Module):
+    def __init__(self, vocab_size=VOCAB_SIZE, dim=HIDDEN_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, num_heads=NUM_HEADS):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.pos_emb = nn.Embedding(MAX_SEQ_LEN, dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_heads, dim_feedforward=dim*4, activation='gelu', batch_first=True, norm_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.norm_out = nn.RMSNorm(dim)
+        self.head = nn.Linear(dim, vocab_size, bias=False)
+        self.head.weight = self.embedding.weight
+
+    def forward(self, idx):
+        B, T = idx.shape
+        x = self.embedding(idx)
+        pos = torch.arange(0, T, device=x.device).unsqueeze(0)
+        x = x + self.pos_emb(pos)
+        mask = nn.Transformer.generate_square_subsequent_mask(T, device=x.device)
+        x = self.transformer(x, mask=mask, is_causal=True)
+        x = self.norm_out(x)
+        return self.head(x)
+
+    def compute_loss(self, inputs, targets):
+        device = next(self.parameters()).device
+        x = torch.from_numpy(inputs.astype(np.int64)).to(device)
+        y = torch.from_numpy(targets.astype(np.int64)).to(device)
+        logits = self.forward(x)
+        return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+    
+    def get_pole_stats(self):
+        return {"sigma_mean": [0]*NUM_LAYERS, "sigma_std": [0]*NUM_LAYERS, "omega_mean": [0]*NUM_LAYERS, "omega_std": [0]*NUM_LAYERS}
+
+
+# ============================================================================
 # Training Loop
 # ============================================================================
 
@@ -289,8 +351,18 @@ def train():
     print(f"Train tokens: {len(train_data):,}, Val tokens: {len(val_data):,}")
 
     # Build model
-    model = PoleModel().to(device)
+    arch = os.environ.get("ARCH", "pole").lower()
+    if arch == "pole":
+        model = PoleModel().to(device)
+    elif arch == "transformer":
+        model = TransformerModel().to(device)
+    elif arch == "lstm":
+        model = LSTMModel().to(device)
+    else:
+        raise ValueError(f"Unknown ARCH: {arch}")
+    
     n_params = sum(p.numel() for p in model.parameters())
+    print(f"Arch: {arch.upper()}")
     print(f"Model parameters: {n_params:,}")
 
     # Optimizer
